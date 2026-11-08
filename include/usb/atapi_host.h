@@ -289,6 +289,20 @@ esp_err_t atapi_host_read_data(atapi_host_device_handle_t handle, uint32_t lba, 
 esp_err_t atapi_host_set_speed(atapi_host_device_handle_t handle, uint16_t read_kbps);
 
 /**
+ * @brief SET STREAMING with a performance descriptor: the MMC-3+ way to set the read speed. Many newer drives
+ *        accept SET CD SPEED but only honour this one.
+ * @param end_lba   Last LBA the setting applies to (use the lead-out - 1)
+ * @param read_kbps Read speed in kB/s (176 = 1x)
+ */
+esp_err_t atapi_host_set_streaming(atapi_host_device_handle_t handle, uint32_t end_lba, uint16_t read_kbps);
+
+/**
+ * @brief Read the current and maximum read speed from the CD capabilities mode page (2Ah). The fields are obsolete
+ *        in later MMC versions, so a drive may report 0 or a stale value.
+ */
+esp_err_t atapi_host_get_speed(atapi_host_device_handle_t handle, uint16_t *cur_kbps, uint16_t *max_kbps);
+
+/**
  * @brief START STOP UNIT
  * @param start  true: spin up, false: spin down
  * @param load_eject  true: load (start=true) or eject (start=false) the tray

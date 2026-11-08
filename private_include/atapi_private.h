@@ -38,6 +38,7 @@ typedef struct atapi_host_device {
     usb_device_handle_t dev_hdl;
     usb_transfer_t *bulk_xfer;       /* Bulk transfers (CBW, data, CSW) */
     usb_transfer_t *ctrl_xfer;       /* Control transfers (reset recovery, clear halt) */
+    bool xfer_lost;                  /* A timed-out transfer could not be cancelled: the device is unusable */
     uint8_t usb_address;
     uint8_t iface_num;
     uint8_t subclass;

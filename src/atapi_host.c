@@ -11,6 +11,7 @@
 #include <sys/queue.h>
 #include "esp_log.h"
 #include "esp_check.h"
+#include "esp_system.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
@@ -143,8 +144,13 @@ static void transfer_cb(usb_transfer_t *xfer)
     xSemaphoreGive(dev->transfer_done);
 }
 
+#define CANCEL_WAIT_MS 2000
+
 static usb_transfer_status_t submit_and_wait(atapi_device_t *dev, usb_transfer_t *xfer, bool is_ctrl)
 {
+    if (dev->xfer_lost) {
+        return USB_TRANSFER_STATUS_ERROR; /* a transfer is still owned by the stack: fail fast */
+    }
     xfer->device_handle = dev->dev_hdl;
     xfer->callback = transfer_cb;
     xfer->context = dev;
@@ -159,10 +165,18 @@ static usb_transfer_status_t submit_and_wait(atapi_device_t *dev, usb_transfer_t
     if (xSemaphoreTake(dev->transfer_done, pdMS_TO_TICKS(xfer->timeout_ms)) != pdTRUE) {
         /* Timed out: cancel the transfer by halting and flushing the endpoint */
         ESP_LOGW(TAG, "Transfer on EP 0x%02x timed out", xfer->bEndpointAddress);
-        usb_host_endpoint_halt(dev->dev_hdl, xfer->bEndpointAddress);
-        usb_host_endpoint_flush(dev->dev_hdl, xfer->bEndpointAddress);
-        usb_host_endpoint_clear(dev->dev_hdl, xfer->bEndpointAddress);
-        xSemaphoreTake(dev->transfer_done, portMAX_DELAY); /* Flushed, so completes immediately */
+        esp_err_t h = usb_host_endpoint_halt(dev->dev_hdl, xfer->bEndpointAddress);
+        esp_err_t f = usb_host_endpoint_flush(dev->dev_hdl, xfer->bEndpointAddress);
+        esp_err_t c = usb_host_endpoint_clear(dev->dev_hdl, xfer->bEndpointAddress);
+        /* Flushed, so it normally completes immediately. If not (seen with a wedged bridge, likely on EP0),
+         * waiting forever would block the caller silently: give up on the device instead. */
+        if (xSemaphoreTake(dev->transfer_done, pdMS_TO_TICKS(CANCEL_WAIT_MS)) != pdTRUE) {
+            ESP_LOGE(TAG, "Transfer on EP 0x%02x could not be cancelled (halt %s, flush %s, clear %s); "
+                     "device unusable until reconnected", xfer->bEndpointAddress, esp_err_to_name(h),
+                     esp_err_to_name(f), esp_err_to_name(c));
+            dev->xfer_lost = true;
+            return USB_TRANSFER_STATUS_ERROR;
+        }
         return USB_TRANSFER_STATUS_TIMED_OUT;
     }
     return xfer->status;
@@ -491,6 +505,21 @@ static void event_task(void *arg)
     vTaskDelete(NULL);
 }
 
+/* Before esp_restart(): let a running command finish and block new ones, so the ESP doesn't reset in the middle
+ * of a BOT command. Some bridges (JMicron 152d:2338 with a TSSTcorp drive) stay wedged after that. */
+static void shutdown_handler(void)
+{
+    if (!s_driver) {
+        return;
+    }
+    atapi_device_t *dev;
+    STAILQ_FOREACH(dev, &s_driver->devices, tailq_entry) {
+        if (dev->lock && xSemaphoreTake(dev->lock, pdMS_TO_TICKS(3000)) != pdTRUE) {
+            ESP_LOGW(TAG, "Restart while a command is running on device %d", dev->usb_address);
+        }
+    }
+}
+
 esp_err_t atapi_host_install(const atapi_host_driver_config_t *config)
 {
     ESP_RETURN_ON_FALSE(config && config->callback, ESP_ERR_INVALID_ARG, TAG, "callback required");
@@ -517,6 +546,7 @@ esp_err_t atapi_host_install(const atapi_host_driver_config_t *config)
     };
     ESP_GOTO_ON_ERROR(usb_host_client_register(&client_config, &drv->client_hdl), fail, TAG, "client register");
     s_driver = drv;
+    esp_register_shutdown_handler(shutdown_handler); /* ESP_ERR_INVALID_STATE if already registered: fine */
 
     if (config->create_background_task) {
         BaseType_t ok = xTaskCreatePinnedToCore(event_task, "atapi_usb", config->stack_size, NULL,
@@ -585,8 +615,8 @@ static esp_err_t do_inquiry(atapi_device_t *dev)
         if (err == ESP_OK && len >= 32) {
             break;
         }
-        if (err == ESP_ERR_INVALID_STATE) {
-            break; /* device gone */
+        if (err == ESP_ERR_INVALID_STATE || dev->xfer_lost) {
+            break; /* device gone, or a transfer couldn't be cancelled (wedged bridge) */
         }
         ESP_LOGI(TAG, "Drive not responding yet (%s), retrying...", esp_err_to_name(err));
         vTaskDelay(pdMS_TO_TICKS(200));
@@ -611,8 +641,17 @@ static void free_device(atapi_device_t *dev, bool claimed)
     if (claimed) {
         usb_host_interface_release(s_driver->client_hdl, dev->dev_hdl, dev->iface_num);
     }
+    if (dev->xfer_lost && xSemaphoreTake(dev->transfer_done, pdMS_TO_TICKS(CANCEL_WAIT_MS)) == pdTRUE) {
+        dev->xfer_lost = false; /* completed after all (typically with NO_DEVICE once unplugged) */
+    }
     if (dev->dev_hdl) {
         usb_host_device_close(s_driver->client_hdl, dev->dev_hdl);
+    }
+    if (dev->xfer_lost) {
+        /* The stack still owns a transfer and will call transfer_cb(dev) when the device goes away: keep the
+         * device struct, its transfers and semaphores alive (a few hundred bytes, leaked until reboot). */
+        ESP_LOGW(TAG, "Device %d freed with a transfer still pending; leaking its context", dev->usb_address);
+        return;
     }
     if (dev->bulk_xfer) {
         usb_host_transfer_free(dev->bulk_xfer);

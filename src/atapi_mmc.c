@@ -24,6 +24,8 @@ static const char *TAG = "atapi_mmc";
 #define MMC_READ_10             0x28
 #define MMC_READ_TOC            0x43
 #define MMC_GET_EVENT_STATUS    0x4A
+#define MMC_MODE_SENSE_10       0x5A
+#define MMC_SET_STREAMING       0xB6
 #define MMC_SET_CD_SPEED        0xBB
 #define MMC_READ_CD             0xBE
 
@@ -371,6 +373,51 @@ esp_err_t atapi_host_set_speed(atapi_host_device_handle_t handle, uint16_t read_
     put_be16(&cdb[2], read_kbps);
     put_be16(&cdb[4], 0xFFFF); /* write speed: don't care */
     return run_cmd(handle, cdb, sizeof(cdb), NULL, 0, false, ATAPI_TIMEOUT_DEFAULT_MS, NULL);
+}
+
+esp_err_t atapi_host_set_streaming(atapi_host_device_handle_t handle, uint32_t end_lba, uint16_t read_kbps)
+{
+    ESP_RETURN_ON_FALSE(handle, ESP_ERR_INVALID_ARG, TAG, "");
+    /* Performance descriptor (MMC-5 6.39): read_kbps kB per 1000 ms over LBA 0..end_lba. Write values are
+     * required to be non-zero by some drives, so they get the same numbers. */
+    uint8_t desc[28] = {0};
+    desc[0] = 0x00;             /* WRC 0, RDD 0 (don't restore defaults), Exact 0, RA 0 */
+    put_be32(&desc[4], 0);      /* start LBA */
+    put_be32(&desc[8], end_lba);
+    put_be32(&desc[12], read_kbps); /* read size, kB */
+    put_be32(&desc[16], 1000);      /* read time, ms */
+    put_be32(&desc[20], read_kbps); /* write size, kB */
+    put_be32(&desc[24], 1000);      /* write time, ms */
+    uint8_t cdb[12] = {MMC_SET_STREAMING};
+    cdb[8] = 0x00; /* type: performance descriptor */
+    put_be16(&cdb[9], sizeof(desc));
+    return run_cmd(handle, cdb, sizeof(cdb), desc, sizeof(desc), false, ATAPI_TIMEOUT_DEFAULT_MS, NULL);
+}
+
+esp_err_t atapi_host_get_speed(atapi_host_device_handle_t handle, uint16_t *cur_kbps, uint16_t *max_kbps)
+{
+    ESP_RETURN_ON_FALSE(handle && cur_kbps && max_kbps, ESP_ERR_INVALID_ARG, TAG, "");
+    /* MODE SENSE(10), page 2Ah. Header first, then the exact length (some bridges stall on a larger
+     * allocation length than the reply, see READ TOC). */
+    uint8_t cdb[10] = {MMC_MODE_SENSE_10, 0x08 /* DBD */, 0x2A};
+    uint8_t hdr[8] = {0};
+    size_t len = 0;
+    put_be16(&cdb[7], sizeof(hdr));
+    ESP_RETURN_ON_ERROR(run_cmd(handle, cdb, sizeof(cdb), hdr, sizeof(hdr), true, ATAPI_TIMEOUT_DEFAULT_MS, &len),
+                        TAG, "MODE SENSE header");
+    size_t total = ((hdr[0] << 8) | hdr[1]) + 2;
+    uint8_t buf[64] = {0};
+    total = MIN(total, sizeof(buf));
+    ESP_RETURN_ON_FALSE(total >= 8 + 16, ESP_ERR_INVALID_RESPONSE, TAG, "page 2Ah too short");
+    put_be16(&cdb[7], total);
+    ESP_RETURN_ON_ERROR(run_cmd(handle, cdb, sizeof(cdb), buf, total, true, ATAPI_TIMEOUT_DEFAULT_MS, &len),
+                        TAG, "MODE SENSE");
+    const uint8_t *page = &buf[8 + ((buf[6] << 8) | buf[7])]; /* skip block descriptors, if any */
+    ESP_RETURN_ON_FALSE(page + 16 <= buf + len && (page[0] & 0x3F) == 0x2A, ESP_ERR_INVALID_RESPONSE, TAG,
+                        "bad page 2Ah");
+    *max_kbps = (page[8] << 8) | page[9];
+    *cur_kbps = (page[14] << 8) | page[15];
+    return ESP_OK;
 }
 
 esp_err_t atapi_host_start_stop(atapi_host_device_handle_t handle, bool start, bool load_eject)

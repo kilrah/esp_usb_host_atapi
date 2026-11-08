@@ -14,7 +14,7 @@ It requires ESP-IDF >= 6.0 and the `espressif/usb` component. It has been tested
 | [include/usb/atapi_host.h](include/usb/atapi_host.h) | Public API and types |
 | [private_include/atapi_private.h](private_include/atapi_private.h) | Device struct, timeouts, max transfer size |
 | [src/atapi_host.c](src/atapi_host.c) | USB Host client, device install, descriptor parsing, Bulk-Only Transport, error recovery |
-| [src/atapi_mmc.c](src/atapi_mmc.c) | MMC commands with auto REQUEST SENSE: TUR, wait ready, GESN, READ TOC, READ CD, READ(10), SET CD SPEED, START STOP UNIT, PREVENT ALLOW |
+| [src/atapi_mmc.c](src/atapi_mmc.c) | MMC commands with auto REQUEST SENSE: TUR, wait ready, GESN, READ TOC, READ CD, READ(10), SET CD SPEED, SET STREAMING, MODE SENSE page 2Ah (speed), START STOP UNIT, PREVENT ALLOW |
 | [src/atapi_cdtext.c](src/atapi_cdtext.c) | CD-TEXT (READ TOC format 0101b) pack parser |
 
 ## Usage
