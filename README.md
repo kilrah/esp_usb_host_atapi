@@ -73,6 +73,15 @@ Every command function is thread-safe: calls are serialized per device with a mu
 - **BOT error handling:** a STALL in the data phase is cleared, then the CSW is read. A STALL on the CSW
   triggers one retry. An invalid CSW, a phase error or a timeout triggers Reset Recovery (class request 0xFF + clear
   both endpoints). On CHECK CONDITION the driver issues REQUEST SENSE automatically.
+- **Exact allocation lengths for variable-size replies:** READ TOC first reads 12 bytes (header + first
+  descriptor), then exactly the length the header reports, like Linux `sr`. CD-TEXT does the same. A JMicron
+  USB-IDE bridge (VID 0x152d PID 0x2338, JLMS XJ-HD165H drive) did not end the data phase with a short packet
+  when the allocation length was larger than the reply: the bulk IN timed out after 30 s on every TOC read.
+  Keep this in mind for new commands with variable-length replies.
+- **TOC validation:** the entry count must match the header's first/last track, track numbers must be consecutive,
+  and addresses must increase up to the lead-out. Otherwise the TOC is re-read (3 attempts) and dumped at warning
+  level. Once, the JMicron bridge returned a TOC with CSW bytes (`USBS`) in the middle of the data.
+  If the bus delivers a different byte count than the CSW residue implies, `atapi_host` logs a warning.
 - **Timeouts:** CBW 5 s, normal commands 10 s, TOC/reads/eject 30 s. INQUIRY at install retries every
   3 s for up to ~60 s, because the bridge may not answer while the drive is busy.
 

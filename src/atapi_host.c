@@ -371,6 +371,11 @@ esp_err_t atapi_bot_command(atapi_device_t *dev, const uint8_t *cdb, size_t cdb_
         return ESP_ERR_ATAPI_TRANSPORT;
     }
 
+    if (data_len && data_in && transferred != data_len - MIN(csw.residue, data_len)) {
+        ESP_LOGW(TAG, "CMD 0x%02x: received %u bytes, CSW says %u (requested %u, residue %"PRIu32")", cdb[0],
+                 (unsigned)transferred, (unsigned)(data_len - MIN(csw.residue, data_len)), (unsigned)data_len,
+                 csw.residue);
+    }
     if (actual_len) {
         /* Prefer the device-reported residue; fall back to what the bus delivered */
         size_t by_residue = csw.residue <= data_len ? data_len - csw.residue : 0;

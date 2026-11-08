@@ -200,29 +200,13 @@ esp_err_t atapi_host_get_media_status(atapi_host_device_handle_t handle, atapi_m
 /* TOC                                                                      */
 /* ------------------------------------------------------------------------ */
 
-esp_err_t atapi_host_read_toc(atapi_host_device_handle_t handle, atapi_toc_t *toc)
+/* Parse a format 0 TOC response and check that it is consistent */
+static esp_err_t parse_toc(const uint8_t *resp, size_t len, atapi_toc_t *toc)
 {
-    ESP_RETURN_ON_FALSE(handle && toc, ESP_ERR_INVALID_ARG, TAG, "");
-
-    const size_t alloc = 4 + (ATAPI_MAX_TRACKS + 1) * 8; /* header + 99 tracks + lead-out */
-    uint8_t *resp = calloc(1, alloc);
-    ESP_RETURN_ON_FALSE(resp, ESP_ERR_NO_MEM, TAG, "");
-
-    uint8_t cdb[10] = {MMC_READ_TOC, 0x00 /* LBA format */, 0x00 /* format 0: TOC */, 0, 0, 0, 1 /* from track 1 */};
-    put_be16(&cdb[7], alloc);
-
-    size_t len = 0;
-    esp_err_t err = run_cmd(handle, cdb, sizeof(cdb), resp, alloc, true, ATAPI_TIMEOUT_LONG_MS, &len);
-    if (err != ESP_OK) {
-        free(resp);
-        return err;
-    }
-
     memset(toc, 0, sizeof(*toc));
     size_t data_len = MIN(len, (size_t)(((resp[0] << 8) | resp[1]) + 2));
     if (data_len < 4 + 8) {
-        free(resp);
-        ESP_LOGE(TAG, "TOC too short (%u bytes)", (unsigned)data_len);
+        ESP_LOGW(TAG, "TOC too short (%u bytes)", (unsigned)data_len);
         return ESP_ERR_INVALID_RESPONSE;
     }
     toc->first_track = resp[2];
@@ -244,11 +228,71 @@ esp_err_t atapi_host_read_toc(atapi_host_device_handle_t handle, atapi_toc_t *to
             e->lba = lba;
         }
     }
-    free(resp);
 
-    ESP_RETURN_ON_FALSE(toc->num_tracks > 0 && have_leadout, ESP_ERR_INVALID_RESPONSE, TAG,
-                        "TOC has no tracks or lead-out");
+    /* Consistency: guards against corrupted transfers (seen once with a JMicron USB-IDE bridge) */
+    const char *problem = NULL;
+    if (toc->num_tracks == 0 || !have_leadout) {
+        problem = "no tracks or lead-out";
+    } else if (toc->first_track < 1 || toc->last_track < toc->first_track ||
+               toc->num_tracks != toc->last_track - toc->first_track + 1) {
+        problem = "track count doesn't match the header";
+    } else {
+        for (int i = 0; i < toc->num_tracks && !problem; i++) {
+            uint32_t next = i + 1 < toc->num_tracks ? toc->tracks[i + 1].lba : toc->leadout_lba;
+            if (toc->tracks[i].number != toc->first_track + i) {
+                problem = "track numbers not consecutive";
+            } else if (toc->tracks[i].lba >= next) {
+                problem = "track addresses not increasing";
+            }
+        }
+    }
+    if (problem) {
+        ESP_LOGW(TAG, "Invalid TOC (%s), %u bytes:", problem, (unsigned)data_len);
+        ESP_LOG_BUFFER_HEX_LEVEL(TAG, resp, data_len, ESP_LOG_WARN);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
     return ESP_OK;
+}
+
+static esp_err_t read_toc_once(atapi_device_t *dev, uint8_t *resp, size_t alloc, atapi_toc_t *toc)
+{
+    /* Two steps, like Linux sr: the header first (plus the first descriptor), then exactly the TOC length.
+     * A USB-IDE bridge (JMicron 152d:2338) hung (bulk IN timed out) when the allocation length exceeded
+     * the data the drive returned, instead of ending the transfer with a short packet. */
+    uint8_t cdb[10] = {MMC_READ_TOC, 0x00 /* LBA format */, 0x00 /* format 0: TOC */, 0, 0, 0, 1 /* from track 1 */};
+    const size_t hdr_len = 12;
+    put_be16(&cdb[7], hdr_len);
+    size_t len = 0;
+    ESP_RETURN_ON_ERROR(run_cmd(dev, cdb, sizeof(cdb), resp, hdr_len, true, ATAPI_TIMEOUT_LONG_MS, &len),
+                        TAG, "READ TOC header failed");
+    size_t want = len >= 2 ? ((resp[0] << 8) | resp[1]) + 2 : 0;
+    if (want < 4 + 8 || want > alloc) {
+        ESP_LOGW(TAG, "TOC header reports %u bytes, reading the maximum", (unsigned)want);
+        want = alloc;
+    }
+    if (want > len) {
+        memset(resp, 0, alloc);
+        put_be16(&cdb[7], want);
+        ESP_RETURN_ON_ERROR(run_cmd(dev, cdb, sizeof(cdb), resp, want, true, ATAPI_TIMEOUT_LONG_MS, &len),
+                            TAG, "READ TOC failed");
+    }
+    return parse_toc(resp, len, toc);
+}
+
+esp_err_t atapi_host_read_toc(atapi_host_device_handle_t handle, atapi_toc_t *toc)
+{
+    ESP_RETURN_ON_FALSE(handle && toc, ESP_ERR_INVALID_ARG, TAG, "");
+
+    const size_t alloc = 4 + (ATAPI_MAX_TRACKS + 1) * 8; /* header + 99 tracks + lead-out */
+    uint8_t *resp = calloc(1, alloc);
+    ESP_RETURN_ON_FALSE(resp, ESP_ERR_NO_MEM, TAG, "");
+
+    esp_err_t err = ESP_ERR_INVALID_RESPONSE;
+    for (int attempt = 0; attempt < 3 && err == ESP_ERR_INVALID_RESPONSE; attempt++) {
+        err = read_toc_once(handle, resp, alloc, toc);
+    }
+    free(resp);
+    return err;
 }
 
 /* ------------------------------------------------------------------------ */
