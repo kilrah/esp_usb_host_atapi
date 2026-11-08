@@ -6,6 +6,7 @@
  * Commands are sent as SCSI MMC packets (the same packets ATAPI carries),
  * which gives access to raw CD-DA audio sectors via READ CD.
  *
+ * SPDX-FileCopyrightText: 2026 Andre Bernet
  * SPDX-License-Identifier: Apache-2.0
  */
 

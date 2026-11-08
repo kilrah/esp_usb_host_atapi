@@ -5,7 +5,22 @@ It sends SCSI MMC commands (the packet commands ATAPI carries) over **Bulk-Only 
 gives access to things the generic MSC driver can't do: raw CD-DA audio sectors, TOC, CD-TEXT,
 tray control.
 
-It requires ESP-IDF >= 6.0 and the `espressif/usb` component. It has been tested on ESP32-S3.
+It requires ESP-IDF >= 6.0 and the `espressif/usb` component. It has been tested on ESP32-S3 with several drives
+behind USB-IDE/SATA bridges, in a CD player that streams CD audio to I2S. It should work on the ESP32-S2
+(same full-speed USB OTG peripheral; builds, but untested).
+
+## Installation
+
+```
+idf.py add-dependency "kilrah/usb_host_atapi^0.1.0"
+```
+
+The [cd_info example](examples/cd_info) prints the drive's identification, the TOC and the CD-TEXT of the
+inserted disc. To create a project from it: `idf.py create-project-from-example "kilrah/usb_host_atapi^0.1.0:cd_info"`.
+
+**Power:** optical drives draw more current than a dev board can supply on VBUS, especially at spin-up. Power the
+drive and its bridge from their own supply. A drive that enumerates and then drops off the bus is usually a power
+problem. Avoid power banks: many short the USB data lines to signal fast charging.
 
 ## Files
 
@@ -100,6 +115,19 @@ Normal reads afterwards must still succeed.
 
 The stock `usb_host_msc` driver has the same latent bug. It may be worth reporting upstream (esp-usb).
 
+## Tested hardware
+
+| Bridge | Drive | Notes |
+|---|---|---|
+| JMicron 152d:2338, USB-IDE | JLMS XJ-HD165H (DVD-ROM) | Works well; honours SET CD SPEED. Needed the exact allocation lengths (above) |
+| JMicron 152d:2338, USB-IDE | TSSTcorp SH-S182M (DVD writer) | Works, but reads audio at full speed whatever the speed commands say, and wedges after a USB re-enumeration without power cycle (host reset); see below |
+| (built in) | HP USB laptop drive | Works; can't close its own tray |
+
+If a timed-out transfer can't be cancelled (the ESP USB Host library can't halt or flush EP0, so a hung control
+transfer never completes), the device is marked unusable: further commands fail at once with
+`ESP_ERR_ATAPI_TRANSPORT` and `install_device` returns an error instead of blocking. Only a power cycle of the
+drive (or of VBUS, if the board can switch it) helps then.
+
 ## Limitations / TODO
 
 - Single LUN (LUN 0) only.
@@ -108,3 +136,12 @@ The stock `usb_host_msc` driver has the same latent bug. It may be worth reporti
   characters in ISO 8859-1). MS-JIS / double-byte text is passed through raw. CRC is not checked.
 - READ CD does not request C2 error pointers or sub-channel data.
 - No support for suspend/resume events.
+- Full-speed only so far. On high-speed hosts (ESP32-P4) `ATAPI_MAX_XFER_SIZE` would have to become a multiple
+  of 512.
+
+## License
+
+Apache-2.0, see [LICENSE](LICENSE).
+
+This driver was written with AI assistance (Claude by Anthropic), directed, reviewed and tested on hardware by the
+author.

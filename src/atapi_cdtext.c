@@ -12,6 +12,7 @@
  * first belonging to the track number of the first pack and each following one
  * to the next track. A lone TAB means "same as previous track".
  *
+ * SPDX-FileCopyrightText: 2026 Andre Bernet
  * SPDX-License-Identifier: Apache-2.0
  */
 

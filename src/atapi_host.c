@@ -1,6 +1,7 @@
 /*
  * USB Host ATAPI driver - USB client handling and Bulk-Only Transport
  *
+ * SPDX-FileCopyrightText: 2026 Andre Bernet
  * SPDX-License-Identifier: Apache-2.0
  */
 

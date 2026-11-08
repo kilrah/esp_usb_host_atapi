@@ -1,6 +1,30 @@
-description: USB Host ATAPI/MMC driver for optical drives behind USB mass storage bridges
+version: "0.1.0"
+description: USB Host driver for CD/DVD drives behind USB mass storage bridges (BOT + SCSI MMC) - CD-DA audio, TOC, CD-TEXT, tray control
+url: https://github.com/kilrah/usb_host_atapi
+repository: https://github.com/kilrah/usb_host_atapi.git
+issues: https://github.com/kilrah/usb_host_atapi/issues
+license: Apache-2.0
+maintainers:
+  - Andre Bernet
+tags:
+  - usb
+  - usb_host
+  - cdrom
+  - atapi
+  - mmc
+  - cd-audio
+targets:
+  - esp32s2
+  - esp32s3
 dependencies:
   idf: ">=6.0"
   usb:
     version: "^1.0.0"
     public: true
+files:
+  exclude:
+    - "examples/**/build/**"
+    - "examples/**/managed_components/**"
+    - "examples/**/sdkconfig"
+    - "examples/**/sdkconfig.old"
+    - "examples/**/dependencies.lock"

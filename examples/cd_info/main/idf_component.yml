@@ -1,0 +1,5 @@
+dependencies:
+  idf: ">=6.0"
+  kilrah/usb_host_atapi:
+    version: "*"
+    override_path: "../../../"
