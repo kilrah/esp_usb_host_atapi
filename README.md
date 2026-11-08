@@ -103,6 +103,8 @@ The stock `usb_host_msc` driver has the same latent bug. It may be worth reporti
 ## Limitations / TODO
 
 - Single LUN (LUN 0) only.
-- CD-TEXT: only block 0 (first language) is parsed. MS-JIS / double-byte text is passed through raw. CRC is not checked.
+- CD-TEXT: only block 0 (first language) is parsed. Charset ISO 8859-1 is converted to UTF-8, with bytes 0x80-0x9F
+  decoded as Windows-1252 (burning software such as AnyBurn writes ’ “ ” – — … € ™ there; they are C1 control
+  characters in ISO 8859-1). MS-JIS / double-byte text is passed through raw. CRC is not checked.
 - READ CD does not request C2 error pointers or sub-channel data.
 - No support for suspend/resume events.

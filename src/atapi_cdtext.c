@@ -45,6 +45,19 @@ static int pack_type_to_field(uint8_t type)
     return -1;
 }
 
+/*
+ * Bytes 0x80..0x9F are C1 control characters in ISO 8859-1, which never belong in a title. Burning software
+ * (e.g. AnyBurn) writes Windows-1252 there instead: ’ “ ” – — … € ™ Š Œ ... So decode them as Windows-1252.
+ * 0 = undefined in Windows-1252.
+ */
+static const uint16_t CP1252_80_9F[32] = {
+    0x20AC, 0, 0x201A, 0x0192, 0x201E, 0x2026, 0x2020, 0x2021, 0x02C6, 0x2030, 0x0160, 0x2039, 0x0152, 0, 0x017D, 0,
+    0, 0x2018, 0x2019, 0x201C, 0x201D, 0x2022, 0x2013, 0x2014, 0x02DC, 0x2122, 0x0161, 0x203A, 0x0153, 0, 0x017E, 0x0178,
+};
+
+/* Max. UTF-8 bytes per CD-TEXT byte (Windows-1252 0x80..0x9F maps up to U+20AC) */
+#define UTF8_MAX_PER_BYTE 3
+
 /* Append @p len bytes to the pool, converting to UTF-8. Returns the string start. */
 static char *pool_add(char **wr, const uint8_t *src, size_t len, uint8_t charset)
 {
@@ -52,7 +65,19 @@ static char *pool_add(char **wr, const uint8_t *src, size_t len, uint8_t charset
     char *p = start;
     for (size_t i = 0; i < len; i++) {
         uint8_t c = src[i];
-        if (charset == CHARSET_ISO8859_1 && c >= 0x80) {
+        if (charset == CHARSET_ISO8859_1 && c >= 0x80 && c <= 0x9F) {
+            uint16_t u = CP1252_80_9F[c - 0x80];
+            if (!u) {
+                *p++ = '?';
+            } else if (u < 0x800) {
+                *p++ = 0xC0 | (u >> 6);
+                *p++ = 0x80 | (u & 0x3F);
+            } else {
+                *p++ = 0xE0 | (u >> 12);
+                *p++ = 0x80 | ((u >> 6) & 0x3F);
+                *p++ = 0x80 | (u & 0x3F);
+            }
+        } else if (charset == CHARSET_ISO8859_1 && c >= 0x80) {
             *p++ = 0xC0 | (c >> 6);
             *p++ = 0x80 | (c & 0x3F);
         } else if (charset == CHARSET_ASCII && c >= 0x80) {
@@ -110,8 +135,8 @@ esp_err_t atapi_host_read_cd_text(atapi_host_device_handle_t handle, atapi_cd_te
         }
     }
 
-    /* Worst case each byte becomes 2 UTF-8 bytes, plus terminators */
-    cdtext->pool = malloc(num_packs * PACK_TEXT_LEN * 2 + num_packs + 16);
+    /* Worst case each byte becomes UTF8_MAX_PER_BYTE UTF-8 bytes, plus terminators */
+    cdtext->pool = malloc(num_packs * PACK_TEXT_LEN * UTF8_MAX_PER_BYTE + num_packs + 16);
     if (!cdtext->pool) {
         free(buf);
         return ESP_ERR_NO_MEM;
