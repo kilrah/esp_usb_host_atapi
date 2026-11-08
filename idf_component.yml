@@ -1,0 +1,6 @@
+description: USB Host ATAPI/MMC driver for optical drives behind USB mass storage bridges
+dependencies:
+  idf: ">=6.0"
+  usb:
+    version: "^1.0.0"
+    public: true
