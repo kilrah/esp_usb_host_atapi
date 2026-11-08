@@ -1,5 +1,5 @@
 /*
- * usb_host_atapi example: print drive info, TOC and CD-TEXT of the inserted disc
+ * esp_usb_host_atapi example: print drive info, TOC and CD-TEXT of the inserted disc
  *
  * SPDX-FileCopyrightText: 2026 Andre Bernet
  * SPDX-License-Identifier: Apache-2.0

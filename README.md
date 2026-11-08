@@ -1,4 +1,4 @@
-# usb_host_atapi
+# esp_usb_host_atapi
 
 ESP-IDF USB Host class driver for **optical drives** (CD/DVD/BD) behind USB mass storage bridges.
 It sends SCSI MMC commands (the packet commands ATAPI carries) over **Bulk-Only Transport**. This
@@ -12,11 +12,11 @@ behind USB-IDE/SATA bridges, in a CD player that streams CD audio to I2S. It sho
 ## Installation
 
 ```
-idf.py add-dependency "kilrah/usb_host_atapi^0.1.0"
+idf.py add-dependency "kilrah/esp_usb_host_atapi^0.1.0"
 ```
 
 The [cd_info example](examples/cd_info) prints the drive's identification, the TOC and the CD-TEXT of the
-inserted disc. To create a project from it: `idf.py create-project-from-example "kilrah/usb_host_atapi^0.1.0:cd_info"`.
+inserted disc. To create a project from it: `idf.py create-project-from-example "kilrah/esp_usb_host_atapi^0.1.0:cd_info"`.
 
 **Power:** optical drives draw more current than a dev board can supply on VBUS, especially at spin-up. Power the
 drive and its bridge from their own supply. A drive that enumerates and then drops off the bus is usually a power

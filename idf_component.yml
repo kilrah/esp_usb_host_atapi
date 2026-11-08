@@ -1,8 +1,8 @@
 version: "0.1.0"
 description: USB Host driver for CD/DVD drives behind USB mass storage bridges (BOT + SCSI MMC) - CD-DA audio, TOC, CD-TEXT, tray control
-url: https://github.com/kilrah/usb_host_atapi
-repository: https://github.com/kilrah/usb_host_atapi.git
-issues: https://github.com/kilrah/usb_host_atapi/issues
+url: https://github.com/kilrah/esp_usb_host_atapi
+repository: https://github.com/kilrah/esp_usb_host_atapi.git
+issues: https://github.com/kilrah/esp_usb_host_atapi/issues
 license: Apache-2.0
 maintainers:
   - Andre Bernet
