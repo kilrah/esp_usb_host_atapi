@@ -84,7 +84,8 @@ Every command function is thread-safe: calls are serialized per device with a mu
 - **12-byte CDB padding** for subclass 0x02/0x05 bridges. Linux does the same (`USB_SC_8020`).
 - **Transfer size:** each BOT data phase is limited to `ATAPI_MAX_XFER_SIZE` = 16 × 2352 = 37632 bytes
   (a multiple of 64). Larger reads are split internally. Data is copied out of the USB DMA buffer,
-  so caller buffers can live in PSRAM.
+  so caller buffers can live in PSRAM. That buffer (~37 KB of internal DMA-capable RAM) is allocated once per
+  device, at full size, in `install_device`: growing it later could fail on a fragmented heap.
 - **BOT error handling:** a STALL in the data phase is cleared, then the CSW is read. A STALL on the CSW
   triggers one retry. An invalid CSW, a phase error or a timeout triggers Reset Recovery (class request 0xFF + clear
   both endpoints). On CHECK CONDITION the driver issues REQUEST SENSE automatically.

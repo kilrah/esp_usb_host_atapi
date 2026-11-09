@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1
+
+- Fix: audio reads failed with "No memory for transfer" after reading a large CD-TEXT (e.g. a 41-track
+  compilation), although enough internal RAM was free. The bulk transfer buffer grew on demand, and the heap
+  fragmented around it. It is now allocated once at full size when the device is installed.
+
 ## 0.1.0
 
 First release.

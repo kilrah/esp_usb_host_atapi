@@ -183,16 +183,15 @@ static usb_transfer_status_t submit_and_wait(atapi_device_t *dev, usb_transfer_t
     return xfer->status;
 }
 
-static esp_err_t ensure_bulk_buffer(atapi_device_t *dev, size_t size)
+/*
+ * The bulk transfer buffer is allocated once, at full size, when the device is installed. Growing it on demand
+ * (free + bigger alloc) failed with a fragmented internal heap: a large CD-TEXT read grew it to an intermediate
+ * size, other allocations landed around it, and the 37 KB needed by the first audio read no longer fitted in one
+ * DMA-capable block, although 110 KB of internal RAM were free.
+ */
+static esp_err_t alloc_bulk_buffer(atapi_device_t *dev)
 {
-    if (dev->bulk_xfer && dev->bulk_xfer->data_buffer_size >= size) {
-        return ESP_OK;
-    }
-    if (dev->bulk_xfer) {
-        usb_host_transfer_free(dev->bulk_xfer);
-        dev->bulk_xfer = NULL;
-    }
-    return usb_host_transfer_alloc(size, 0, &dev->bulk_xfer);
+    return usb_host_transfer_alloc(usb_round_up_to_mps(ATAPI_MAX_XFER_SIZE, dev->mps_in), 0, &dev->bulk_xfer);
 }
 
 static esp_err_t status_to_err(usb_transfer_status_t status)
@@ -211,7 +210,7 @@ static esp_err_t bulk_xfer(atapi_device_t *dev, bool in, void *data, size_t len,
                            uint32_t timeout_ms, size_t *actual)
 {
     size_t xfer_len = in ? usb_round_up_to_mps(len, dev->mps_in) : len;
-    ESP_RETURN_ON_ERROR(ensure_bulk_buffer(dev, MAX(xfer_len, 64)), TAG, "No memory for transfer");
+    ESP_RETURN_ON_FALSE(xfer_len <= dev->bulk_xfer->data_buffer_size, ESP_ERR_INVALID_SIZE, TAG, "transfer too large");
 
     usb_transfer_t *xfer = dev->bulk_xfer;
     xfer->bEndpointAddress = in ? dev->ep_in : dev->ep_out;
@@ -702,7 +701,7 @@ esp_err_t atapi_host_install_device(uint8_t usb_address, atapi_host_device_handl
     ESP_GOTO_ON_ERROR(parse_endpoints(dev, cfg, intf, intf_offset), fail, TAG, "endpoints");
 
     ESP_GOTO_ON_ERROR(usb_host_transfer_alloc(CTRL_XFER_SIZE, 0, &dev->ctrl_xfer), fail, TAG, "ctrl xfer");
-    ESP_GOTO_ON_ERROR(ensure_bulk_buffer(dev, 512), fail, TAG, "bulk xfer");
+    ESP_GOTO_ON_ERROR(alloc_bulk_buffer(dev), fail, TAG, "bulk xfer");
     ESP_GOTO_ON_ERROR(usb_host_interface_claim(s_driver->client_hdl, dev->dev_hdl, dev->iface_num,
                                                intf->bAlternateSetting), fail, TAG, "claim");
     dev->alt_setting = intf->bAlternateSetting;
