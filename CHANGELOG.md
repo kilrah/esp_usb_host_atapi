@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.2
+
+- ESP32-P4 added to the supported targets. Tested on its high-speed USB-OTG port (512-byte bulk packets) with an
+  HP BD ROM BC-5501H behind an Initio bridge: TOC, CD-TEXT and continuous CD-DA playback work unchanged, since
+  transfer buffers and IN transfers were already rounded up to the endpoint's max packet size.
+- README: the "full-speed only" limitation is removed and the transfer size note explains the rounding.
+
 ## 0.1.1
 
 - Fix: audio reads failed with "No memory for transfer" after reading a large CD-TEXT (e.g. a 41-track

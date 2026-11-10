@@ -5,9 +5,10 @@ It sends SCSI MMC commands (the packet commands ATAPI carries) over **Bulk-Only 
 gives access to things the generic MSC driver can't do: raw CD-DA audio sectors, TOC, CD-TEXT,
 tray control.
 
-It requires ESP-IDF >= 6.0 and the `espressif/usb` component. It has been tested on ESP32-S3 with several drives
-behind USB-IDE/SATA bridges, in a CD player that streams CD audio to I2S. It should work on the ESP32-S2
-(same full-speed USB OTG peripheral; builds, but untested).
+It requires ESP-IDF >= 6.0 and the `espressif/usb` component. It has been tested on ESP32-S3 (full speed) with
+several drives behind USB-IDE/SATA bridges, and on ESP32-P4 (high speed, 512-byte bulk packets), in a CD player
+that streams CD audio to I2S. It should work on the ESP32-S2 (same full-speed USB OTG peripheral as the S3;
+builds, but untested).
 
 ## Installation
 
@@ -82,8 +83,10 @@ Every command function is thread-safe: calls are serialized per device with a mu
   0x06 (SCSI transparent), protocol 0x50 (BOT), any alternate setting. UAS-capable bridges expose BOT on alt 0.
   The peripheral type must be 0x05 (CD/DVD), otherwise `install_device` returns `ESP_ERR_NOT_SUPPORTED`.
 - **12-byte CDB padding** for subclass 0x02/0x05 bridges. Linux does the same (`USB_SC_8020`).
-- **Transfer size:** each BOT data phase is limited to `ATAPI_MAX_XFER_SIZE` = 16 × 2352 = 37632 bytes
-  (a multiple of 64). Larger reads are split internally. Data is copied out of the USB DMA buffer,
+- **Transfer size:** each BOT data phase is limited to `ATAPI_MAX_XFER_SIZE` = 16 × 2352 = 37632 bytes.
+  Larger reads are split internally. The transfer buffer and every IN transfer are rounded up to the bulk IN
+  endpoint's max packet size (64 at full speed, 512 at high speed), so the size doesn't have to be a multiple
+  of it: a reply that isn't ends with a short packet. Data is copied out of the USB DMA buffer,
   so caller buffers can live in PSRAM. That buffer (~37 KB of internal DMA-capable RAM) is allocated once per
   device, at full size, in `install_device`: growing it later could fail on a fragmented heap.
 - **BOT error handling:** a STALL in the data phase is cleared, then the CSW is read. A STALL on the CSW
@@ -137,8 +140,6 @@ drive (or of VBUS, if the board can switch it) helps then.
   characters in ISO 8859-1). MS-JIS / double-byte text is passed through raw. CRC is not checked.
 - READ CD does not request C2 error pointers or sub-channel data.
 - No support for suspend/resume events.
-- Full-speed only so far. On high-speed hosts (ESP32-P4) `ATAPI_MAX_XFER_SIZE` would have to become a multiple
-  of 512.
 
 ## License
 

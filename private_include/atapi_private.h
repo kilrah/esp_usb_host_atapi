@@ -30,7 +30,7 @@ extern "C" {
 #define ATAPI_TIMEOUT_LONG_MS      30000 /* spin-up, eject, ... */
 
 /* Maximum payload of a single BOT data phase (split larger reads) */
-#define ATAPI_MAX_XFER_SIZE        (16 * ATAPI_CD_AUDIO_SECTOR_SIZE) /* 37632 B, multiple of 64 */
+#define ATAPI_MAX_XFER_SIZE        (16 * ATAPI_CD_AUDIO_SECTOR_SIZE) /* 37632 B; buffers are rounded up to the max packet size */
 
 typedef struct atapi_host_device {
     STAILQ_ENTRY(atapi_host_device) tailq_entry;
