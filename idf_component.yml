@@ -16,6 +16,7 @@ tags:
 targets:
   - esp32s2
   - esp32s3
+  - esp32p4
 dependencies:
   idf: ">=6.0"
   usb:
