@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.4
+
+- Multi-session discs (Enhanced CD / CD-Extra): `atapi_toc_track_length()` included the gap before the next
+  session (first session lead-out, next lead-in and pregap: 11400 sectors, 2:32) in the last track of a session,
+  so reading the end of the last audio track failed with "Illegal mode for this track". The TOC entries now have
+  `end_lba` (the next track's start, or the lead-out of the track's session) and `session`, and the TOC has
+  `num_sessions`. `atapi_host_read_toc()` reads the session info (format 0001b) and, on a multi-session disc, the
+  full TOC (format 0010b) for each session's lead-out. Without a full TOC, the Blue Book gap is assumed.
+
 ## 0.1.3
 
 - ESP32-S31 added to the supported targets (preview target in ESP-IDF 6.1). Tested on an

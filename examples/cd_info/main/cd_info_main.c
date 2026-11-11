@@ -76,8 +76,8 @@ static void print_disc(atapi_host_device_handle_t dev)
     bool has_text = atapi_host_read_cd_text(dev, &text) == ESP_OK;
     const atapi_cd_text_t *t = has_text ? &text : NULL;
 
-    ESP_LOGI(TAG, "TOC: tracks %d-%d, lead-out at LBA %"PRIu32"%s", toc.first_track, toc.last_track,
-             toc.leadout_lba, has_text ? "" : ", no CD-TEXT");
+    ESP_LOGI(TAG, "TOC: tracks %d-%d, lead-out at LBA %"PRIu32", %d session(s)%s", toc.first_track, toc.last_track,
+             toc.leadout_lba, toc.num_sessions, has_text ? "" : ", no CD-TEXT");
     if (has_text) {
         ESP_LOGI(TAG, "Album: %s / %s", cdtext(t, ATAPI_CDTEXT_TITLE, 0), cdtext(t, ATAPI_CDTEXT_PERFORMER, 0));
     }

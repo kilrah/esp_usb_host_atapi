@@ -100,6 +100,11 @@ Every command function is thread-safe: calls are serialized per device with a mu
 - **TOC validation:** the entry count must match the header's first/last track, track numbers must be consecutive,
   and addresses must increase up to the lead-out. Otherwise the TOC is re-read (3 attempts) and dumped at warning
   level. Once, the JMicron bridge returned a TOC with CSW bytes (`USBS`) in the middle of the data.
+- **Sessions:** after the TOC, the session info (format 0001b, fixed 12 bytes) is read. On a multi-session disc
+  (Enhanced CD: audio in session 1, data track in session 2), the full TOC (format 0010b, header first, then the
+  exact length) gives each session's lead-out (point A2h), which becomes `end_lba` of the session's last track.
+  The gap up to the next session (11400 sectors after session 1) has no readable sectors: READ CD fails there
+  with ILLEGAL REQUEST 64/00. Without a usable full TOC, those 11400 sectors are assumed.
   If the bus delivers a different byte count than the CSW residue implies, `atapi_host` logs a warning.
 - **Timeouts:** CBW 5 s, normal commands 10 s, TOC/reads/eject 30 s. INQUIRY at install retries every
   3 s for up to ~60 s, because the bridge may not answer while the drive is busy.

@@ -282,6 +282,163 @@ static esp_err_t read_toc_once(atapi_device_t *dev, uint8_t *resp, size_t alloc,
     return parse_toc(resp, len, toc);
 }
 
+/* Gap between the first session's last track and the next session's first track (Blue Book): lead-out (6750)
+ * + lead-in of the next session (4500) + pregap of its first track (150). Used only without a full TOC. */
+#define SESSION_GAP_SECTORS 11400
+
+#define MAX_SESSIONS 99
+#define FULL_TOC_DESC_LEN 11
+
+static uint32_t msf_to_lba(uint8_t m, uint8_t s, uint8_t f)
+{
+    return ((uint32_t)m * 60 + s) * ATAPI_CD_FRAMES_PER_SECOND + f - ATAPI_CD_MSF_OFFSET;
+}
+
+/* READ TOC format 1 (session info, always 12 bytes): last complete session, and its first track number */
+static esp_err_t read_last_session(atapi_device_t *dev, uint8_t *last_session, uint8_t *first_track)
+{
+    uint8_t cdb[10] = {MMC_READ_TOC, 0x00, 0x01 /* format 1: session info */};
+    uint8_t resp[12] = {0};
+    size_t len = 0;
+    put_be16(&cdb[7], sizeof(resp));
+    esp_err_t err = run_cmd(dev, cdb, sizeof(cdb), resp, sizeof(resp), true, ATAPI_TIMEOUT_LONG_MS, &len);
+    if (err != ESP_OK) {
+        return err;
+    }
+    if (len < sizeof(resp)) {
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    *last_session = resp[3];
+    *first_track = resp[6];
+    return ESP_OK;
+}
+
+/* READ TOC format 2 (full TOC): session of each track and lead-out (point A2h) of each session. Sets the
+ * tracks' session and end_lba, only if the result is consistent. */
+static esp_err_t read_full_toc(atapi_device_t *dev, atapi_toc_t *toc)
+{
+    typedef struct {
+        uint32_t leadout[MAX_SESSIONS + 1];
+        uint32_t end[ATAPI_MAX_TRACKS];
+        uint8_t session[ATAPI_MAX_TRACKS];
+        uint8_t resp[4 + FULL_TOC_DESC_LEN * (ATAPI_MAX_TRACKS + 60)]; /* tracks + A0/A1/A2/B0/C0... entries */
+    } work_t;
+    work_t *w = calloc(1, sizeof(work_t));
+    ESP_RETURN_ON_FALSE(w, ESP_ERR_NO_MEM, TAG, "");
+
+    /* Header first, then the exact length (see read_toc_once). Addresses are always MSF in this format. */
+    uint8_t cdb[10] = {MMC_READ_TOC, 0x02 /* MSF */, 0x02 /* format 2: full TOC */, 0, 0, 0, 1 /* from session 1 */};
+    size_t len = 0;
+    put_be16(&cdb[7], 4);
+    esp_err_t err = run_cmd(dev, cdb, sizeof(cdb), w->resp, 4, true, ATAPI_TIMEOUT_LONG_MS, &len);
+    size_t want = (err == ESP_OK && len >= 2) ? ((w->resp[0] << 8) | w->resp[1]) + 2 : 0;
+    if (err == ESP_OK) {
+        if (want < 4 + FULL_TOC_DESC_LEN) {
+            err = ESP_ERR_INVALID_RESPONSE;
+        } else {
+            want = MIN(want, sizeof(w->resp));
+            put_be16(&cdb[7], want);
+            err = run_cmd(dev, cdb, sizeof(cdb), w->resp, want, true, ATAPI_TIMEOUT_LONG_MS, &len);
+        }
+    }
+    if (err != ESP_OK) {
+        free(w);
+        return err;
+    }
+
+    size_t data_len = MIN(len, want);
+    for (size_t off = 4; off + FULL_TOC_DESC_LEN <= data_len; off += FULL_TOC_DESC_LEN) {
+        const uint8_t *d = &w->resp[off];
+        uint8_t sess = d[0], adr = d[1] >> 4, point = d[3];
+        if (adr != 1 || sess < 1 || sess > MAX_SESSIONS) {
+            continue;
+        }
+        if (point >= toc->first_track && point <= toc->last_track) {
+            w->session[point - toc->first_track] = sess;
+        } else if (point == 0xA2) {
+            w->leadout[sess] = msf_to_lba(d[8], d[9], d[10]);
+        }
+    }
+
+    /* Check everything before changing the TOC */
+    const char *problem = NULL;
+    uint32_t *end = w->end;
+    for (int i = 0; i < toc->num_tracks && !problem; i++) {
+        uint8_t s = w->session[i];
+        bool last_of_session = i + 1 == toc->num_tracks || w->session[i + 1] != s;
+        uint32_t next = i + 1 < toc->num_tracks ? toc->tracks[i + 1].lba : toc->leadout_lba;
+        end[i] = last_of_session ? w->leadout[s] : next;
+        if (s == 0) {
+            problem = "track missing";
+        } else if (i > 0 && s < w->session[i - 1]) {
+            problem = "sessions not increasing";
+        } else if (end[i] <= toc->tracks[i].lba || end[i] > next) {
+            problem = "session lead-out outside its track";
+        }
+    }
+    if (problem) {
+        ESP_LOGW(TAG, "Invalid full TOC (%s), %u bytes:", problem, (unsigned)data_len);
+        ESP_LOG_BUFFER_HEX_LEVEL(TAG, w->resp, data_len, ESP_LOG_WARN);
+        free(w);
+        return ESP_ERR_INVALID_RESPONSE;
+    }
+    for (int i = 0; i < toc->num_tracks; i++) {
+        toc->tracks[i].session = w->session[i];
+        toc->tracks[i].end_lba = end[i];
+    }
+    free(w);
+    return ESP_OK;
+}
+
+/* Fill the tracks' session and end_lba (see atapi_toc_entry_t) */
+static void read_sessions(atapi_device_t *dev, atapi_toc_t *toc)
+{
+    /* Single session: each track ends where the next one starts */
+    toc->num_sessions = 1;
+    for (int i = 0; i < toc->num_tracks; i++) {
+        toc->tracks[i].session = 1;
+        toc->tracks[i].end_lba = i + 1 < toc->num_tracks ? toc->tracks[i + 1].lba : toc->leadout_lba;
+    }
+
+    uint8_t last_session = 1, last_first_track = 0;
+    esp_err_t err = read_last_session(dev, &last_session, &last_first_track);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Session info not available (%s), assuming a single session", esp_err_to_name(err));
+        return;
+    }
+    if (last_session <= 1) {
+        return;
+    }
+    toc->num_sessions = last_session;
+
+    err = ESP_ERR_INVALID_RESPONSE;
+    for (int attempt = 0; attempt < 3 && err == ESP_ERR_INVALID_RESPONSE; attempt++) {
+        err = read_full_toc(dev, toc);
+    }
+    if (err == ESP_OK) {
+        for (int i = 0; i + 1 < toc->num_tracks; i++) {
+            if (toc->tracks[i + 1].session != toc->tracks[i].session) {
+                ESP_LOGI(TAG, "Session %u ends after track %u at LBA %" PRIu32 " (%" PRIu32 " sectors before track %u)",
+                         toc->tracks[i].session, toc->tracks[i].number, toc->tracks[i].end_lba,
+                         toc->tracks[i + 1].lba - toc->tracks[i].end_lba, toc->tracks[i + 1].number);
+            }
+        }
+        return;
+    }
+
+    /* Only the start of the last session is known: assume the Blue Book gap before it */
+    ESP_LOGW(TAG, "Full TOC not available (%s): %u sessions, assuming %d sectors before track %u",
+             esp_err_to_name(err), last_session, SESSION_GAP_SECTORS, last_first_track);
+    for (int i = 0; i < toc->num_tracks; i++) {
+        if (toc->tracks[i].number >= last_first_track) {
+            toc->tracks[i].session = last_session;
+        } else if (i + 1 < toc->num_tracks && toc->tracks[i + 1].number == last_first_track &&
+                   toc->tracks[i + 1].lba > toc->tracks[i].lba + SESSION_GAP_SECTORS) {
+            toc->tracks[i].end_lba = toc->tracks[i + 1].lba - SESSION_GAP_SECTORS;
+        }
+    }
+}
+
 esp_err_t atapi_host_read_toc(atapi_host_device_handle_t handle, atapi_toc_t *toc)
 {
     ESP_RETURN_ON_FALSE(handle && toc, ESP_ERR_INVALID_ARG, TAG, "");
@@ -295,6 +452,9 @@ esp_err_t atapi_host_read_toc(atapi_host_device_handle_t handle, atapi_toc_t *to
         err = read_toc_once(handle, resp, alloc, toc);
     }
     free(resp);
+    if (err == ESP_OK) {
+        read_sessions(handle, toc);
+    }
     return err;
 }
 

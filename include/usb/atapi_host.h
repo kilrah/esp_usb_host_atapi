@@ -107,13 +107,18 @@ typedef struct {
     uint8_t adr;     /*!< Sub-channel Q ADR field */
     uint8_t control; /*!< Sub-channel Q control field (see helpers below) */
     uint32_t lba;    /*!< Start address (LBA) */
+    uint32_t end_lba; /*!< First LBA after the track: the next track's start, or the lead-out of the track's
+                           session. On a multi-session disc (e.g. Enhanced CD) the last track of a session ends
+                           before the gap (lead-out, next lead-in, pregap) that leads to the next session. */
+    uint8_t session; /*!< Session number (1 on single-session discs) */
 } atapi_toc_entry_t;
 
 typedef struct {
     uint8_t first_track;
     uint8_t last_track;
     uint8_t num_tracks;
-    uint32_t leadout_lba; /*!< First LBA after the last track */
+    uint8_t num_sessions;
+    uint32_t leadout_lba; /*!< First LBA after the last track (lead-out of the last session) */
     atapi_toc_entry_t tracks[ATAPI_MAX_TRACKS];
 } atapi_toc_t;
 
@@ -167,10 +172,13 @@ static inline bool atapi_toc_entry_has_preemphasis(const atapi_toc_entry_t *t)
     return (t->control & 0x05) == 0x01;
 }
 
-/** Number of sectors in track index @p idx of @p toc */
+/** Number of readable sectors in track index @p idx of @p toc (up to end_lba, see atapi_toc_entry_t) */
 static inline uint32_t atapi_toc_track_length(const atapi_toc_t *toc, int idx)
 {
-    uint32_t end = (idx + 1 < toc->num_tracks) ? toc->tracks[idx + 1].lba : toc->leadout_lba;
+    uint32_t end = toc->tracks[idx].end_lba;
+    if (!end) { /* TOC not filled by atapi_host_read_toc() */
+        end = (idx + 1 < toc->num_tracks) ? toc->tracks[idx + 1].lba : toc->leadout_lba;
+    }
     return end - toc->tracks[idx].lba;
 }
 
@@ -254,7 +262,13 @@ esp_err_t atapi_host_wait_ready(atapi_host_device_handle_t handle, uint32_t time
 /** GET EVENT STATUS NOTIFICATION (media class, polled). Clears the reported event. */
 esp_err_t atapi_host_get_media_status(atapi_host_device_handle_t handle, atapi_media_status_t *status);
 
-/** READ TOC/PMA/ATIP format 0000b in LBA form */
+/**
+ * @brief Read the TOC: READ TOC/PMA/ATIP format 0000b in LBA form, validated and re-read if corrupted.
+ *
+ * Also reads the session info (format 0001b). On a multi-session disc, the full TOC (format 0010b) gives each
+ * session's lead-out, so that end_lba of the last track of a session is correct. If the full TOC can't be read,
+ * the Blue Book gap of 11400 sectors before the next session is assumed.
+ */
 esp_err_t atapi_host_read_toc(atapi_host_device_handle_t handle, atapi_toc_t *toc);
 
 /**
