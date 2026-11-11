@@ -1,4 +1,4 @@
-version: "0.1.2"
+version: "0.1.3"
 description: USB Host driver for CD/DVD drives behind USB mass storage bridges (BOT + SCSI MMC) - CD-DA audio, TOC, CD-TEXT, tray control
 url: https://github.com/kilrah/esp_usb_host_atapi
 repository: https://github.com/kilrah/esp_usb_host_atapi.git
@@ -17,6 +17,7 @@ targets:
   - esp32s2
   - esp32s3
   - esp32p4
+  - esp32s31
 dependencies:
   idf: ">=6.0"
   usb:

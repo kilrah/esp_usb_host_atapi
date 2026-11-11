@@ -6,8 +6,8 @@ gives access to things the generic MSC driver can't do: raw CD-DA audio sectors,
 tray control.
 
 It requires ESP-IDF >= 6.0 and the `espressif/usb` component. It has been tested on ESP32-S3 (full speed) with
-several drives behind USB-IDE/SATA bridges, and on ESP32-P4 (high speed, 512-byte bulk packets), in a CD player
-that streams CD audio to I2S. It should work on the ESP32-S2 (same full-speed USB OTG peripheral as the S3;
+several drives behind USB-IDE/SATA bridges, and on ESP32-P4 and ESP32-S31 (high speed, 512-byte bulk packets; the
+S31 is a preview target in IDF 6.1, so it needs IDF >= 6.1), in a CD player that streams CD audio to I2S. It should work on the ESP32-S2 (same full-speed USB OTG peripheral as the S3;
 builds, but untested).
 
 ## Installation

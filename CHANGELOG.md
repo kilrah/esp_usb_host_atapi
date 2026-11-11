@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3
+
+- ESP32-S31 added to the supported targets (preview target in ESP-IDF 6.1). Tested on an
+  ESP32-S31-Function-CoreBoard-1, USB 2.0 OTG high-speed port, with an HP BD ROM BC-5501H behind an Initio bridge:
+  TOC, a 41-track CD-TEXT and continuous CD-DA playback work unchanged.
+
 ## 0.1.2
 
 - ESP32-P4 added to the supported targets. Tested on its high-speed USB-OTG port (512-byte bulk packets) with an
